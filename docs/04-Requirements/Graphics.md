@@ -259,7 +259,7 @@ Graphics
 
 The Graphics layer depends on the active application window or display target for presentation.
 
-Rendering systems depend on Graphics for GPU access, resource management, command submission, and frame presentation.
+Rendering systems consume Graphics capabilities for GPU access, resource management, command submission, and frame presentation.
 
 Graphics does not depend on Rendering.
 

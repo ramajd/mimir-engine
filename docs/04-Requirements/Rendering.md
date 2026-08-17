@@ -200,12 +200,11 @@ The engine must provide a way to create and use cameras for rendering.
 * A camera can be created for rendering a scene.
 * The camera affects what appears in the rendered output.
 * The active camera can be changed or selected.
-* Rendering can proceed using camera data from the scene or application state.
+* Rendering can proceed using camera data from the application or scene state.
 
 ### Dependencies
 
 * `REQ-GFX-010`
-* A scene representation capable of supplying camera data
 
 ---
 
@@ -219,7 +218,8 @@ The engine must provide a way to render a basic scene.
 ### Acceptance Criteria
 
 * Scene contents can be rendered to the screen.
-* Scene rendering can include geometry, meshes, textures, and camera-driven output.
+* Scene rendering can include geometry, meshes, and textures.
+* Scene rendering can use the active application camera or other selected camera state.
 * Scene rendering produces visible frame output during normal runtime.
 * Scene rendering can be repeated across frames.
 
@@ -227,7 +227,7 @@ The engine must provide a way to render a basic scene.
 
 * `REQ-GFX-004`
 * `REQ-GFX-010`
-* A scene representation capable of providing renderable objects and camera data
+* `REQ-SCN-010`
 
 ---
 
@@ -275,9 +275,9 @@ The Rendering system depends on Graphics for GPU access, presentation, resource 
 
 The Rendering system depends on Window & Platform for viewport and display-target dimensions.
 
-The Rendering system depends on Scene for scene-driven content and camera usage.
+The Rendering system depends on Scene for scene-driven content.
 
-Rendering does not define a dependency back onto Graphics or Window & Platform; it consumes those capabilities.
+Rendering consumes lower-level capabilities from Graphics and Window & Platform; it does not provide those capabilities itself.
 
 ---
 
