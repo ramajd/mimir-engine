@@ -3,6 +3,8 @@ use std::sync::Arc;
 use wgpu::CurrentSurfaceTexture;
 use winit::window::Window;
 
+use crate::ecs::{Transform, Uniforms};
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
@@ -35,15 +37,15 @@ const VERTICES: &[Vertex] = &[
     Vertex {
         position: [0.0, 0.5, 0.0],
         color: [1.0, 0.0, 0.0],
-    }, // Top (Red)
+    },
     Vertex {
         position: [-0.5, -0.5, 0.0],
         color: [0.0, 1.0, 0.0],
-    }, // Bottom Left (Green)
+    },
     Vertex {
         position: [0.5, -0.5, 0.0],
         color: [0.0, 0.0, 1.0],
-    }, // Bottom Right (Blue)
+    },
 ];
 
 pub struct State {
@@ -56,6 +58,10 @@ pub struct State {
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     num_vertices: u32,
+    world: hecs::World,
+    triangle_entity: hecs::Entity,
+    uniform_buffer: wgpu::Buffer,
+    uniform_bind_group: wgpu::BindGroup,
 }
 
 impl State {
@@ -104,25 +110,63 @@ impl State {
         };
         surface.configure(&device, &config);
 
+        let uniform_data = Uniforms {
+            transform: glam::Mat4::IDENTITY.to_cols_array_2d(),
+        };
+
+        use wgpu::util::DeviceExt;
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Uniform buffer"),
+            contents: bytemuck::cast_slice(&[uniform_data]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let uniform_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+                label: Some("Uniform bind group layout"),
+            });
+        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Uniform binding group"),
+            layout: &uniform_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+        });
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Triangle Shader"),
+            label: Some("Shader with Uniforms"),
             source: wgpu::ShaderSource::Wgsl(
                 r#"
+            struct Uniforms {
+                transform: mat4x4<f32>,
+            };
+            @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
             struct VertexInput {
                 @location(0) position: vec3<f32>,
                 @location(1) color: vec3<f32>,
             };
-            
+
             struct VertexOutput {
                 @builtin(position) clip_position: vec4<f32>,
                 @location(0) color: vec3<f32>,
             };
 
-            @vertex 
+            @vertex
             fn vs_main(model: VertexInput) -> VertexOutput {
                 var out: VertexOutput;
                 out.color = model.color;
-                out.clip_position = vec4<f32>(model.position, 1.0);
+                out.clip_position = uniforms.transform * vec4<f32>(model.position, 1.0);
                 return out;
             }
 
@@ -135,7 +179,6 @@ impl State {
             ),
         });
 
-        use wgpu::util::DeviceExt;
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
             contents: bytemuck::cast_slice(VERTICES),
@@ -146,7 +189,7 @@ impl State {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render pipeline layout"),
-                bind_group_layouts: &[],
+                bind_group_layouts: &[Some(&uniform_bind_group_layout)],
                 ..Default::default()
             });
 
@@ -188,6 +231,13 @@ impl State {
             cache: None,
         });
 
+        let mut world = hecs::World::new();
+        let triangle_entity = world.spawn((Transform {
+            position: glam::Vec3::new(0.0, 0.0, 0.0),
+            rotation: 0.0,
+            scale: glam::Vec3::ONE,
+        },));
+
         Self {
             surface,
             device,
@@ -198,6 +248,10 @@ impl State {
             render_pipeline,
             vertex_buffer,
             num_vertices,
+            world,
+            triangle_entity,
+            uniform_buffer,
+            uniform_bind_group,
         }
     }
 
@@ -214,9 +268,21 @@ impl State {
         }
     }
 
-    pub fn update(&mut self) {
-        // TODO: Game logic goes here
-        // todo!("Game logic goes here")
+    pub fn update(&mut self, dt: f32) {
+        if let Ok(mut transform) = self.world.get::<&mut Transform>(self.triangle_entity) {
+            transform.rotation += 1.5 * dt;
+        }
+
+        if let Ok(transform) = self.world.get::<&Transform>(self.triangle_entity) {
+            let uniform_data = Uniforms {
+                transform: transform.to_matrix().to_cols_array_2d(),
+            };
+            self.queue.write_buffer(
+                &self.uniform_buffer,
+                0,
+                bytemuck::cast_slice(&[uniform_data]),
+            );
+        }
     }
 
     pub fn render(&self) -> bool {
@@ -253,6 +319,7 @@ impl State {
                 });
 
                 render_pass.set_pipeline(&self.render_pipeline);
+                render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                 render_pass.draw(0..self.num_vertices, 0..1);
             }

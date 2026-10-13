@@ -82,7 +82,8 @@ impl ApplicationHandler for MimirApp {
 
         if self.accumulated_time > target_frame_duration {
             if let Some(state) = &mut self.state {
-                state.update();
+                let dt = target_frame_duration.as_secs_f32();
+                state.update(dt);
                 state.request_redraw();
                 self.accumulated_time -= target_frame_duration;
             }

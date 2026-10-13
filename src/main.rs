@@ -1,3 +1,4 @@
+mod ecs;
 mod graphics;
 mod mimir_app;
 
