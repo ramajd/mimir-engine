@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use hecs::Entity;
-use wgpu::CurrentSurfaceTexture;
 use wgpu::util::DeviceExt;
+use wgpu::{CurrentSurfaceTexture, TexelCopyBufferLayout};
 use winit::window::Window;
 
 use crate::components::{GpuMeshInstance, PlayerTag, Transform, Uniforms, VERTICES, Vertex};
@@ -18,7 +18,6 @@ pub struct EngineState<'a> {
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     num_vertices: u32,
-    _uniform_bind_group_layout: wgpu::BindGroupLayout,
     pub world: hecs::World,
     pub input: InputState,
 }
@@ -73,9 +72,75 @@ impl<'a> EngineState<'a> {
         };
         surface.configure(&device, &config);
 
-        let uniform_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
+        let img_width = 256;
+        let img_height = 256;
+        let mut img_data = vec![0u8; (img_width * img_height * 4) as usize];
+        for y in 0..img_height {
+            for x in 0..img_width {
+                let idx = ((y * img_width + x) * 4) as usize;
+                let checker = ((x / 32) + (y / 32)) % 2 == 0;
+                if checker {
+                    img_data[idx] = 255;
+                    img_data[idx + 1] = 255;
+                    img_data[idx + 2] = 255;
+                } else {
+                    img_data[idx] = 50;
+                    img_data[idx + 1] = 50;
+                    img_data[idx + 2] = 150;
+                }
+                img_data[idx + 3] = 255;
+            }
+        }
+
+        let texture_size = wgpu::Extent3d {
+            width: img_width,
+            height: img_height,
+            depth_or_array_layers: 1,
+        };
+
+        let diffuse_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("diffuse texture"),
+            size: texture_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &diffuse_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &img_data,
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * img_width),
+                rows_per_image: Some(img_height),
+            },
+            texture_size,
+        );
+
+        let diffuse_texture_view =
+            diffuse_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let diffuse_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("texture bind group layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
@@ -84,40 +149,58 @@ impl<'a> EngineState<'a> {
                         min_binding_size: None,
                     },
                     count: None,
-                }],
-                label: Some("Uniform bind group layout"),
-            });
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Shader with Uniforms"),
+            label: Some("Texture shader"),
             source: wgpu::ShaderSource::Wgsl(
                 r#"
             struct Uniforms {
                 transform: mat4x4<f32>,
             };
             @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+            @group(0) @binding(1) var t_diffuse: texture_2d<f32>;
+            @group(0) @binding(2) var s_diffuse: sampler;
 
             struct VertexInput {
                 @location(0) position: vec3<f32>,
-                @location(1) color: vec3<f32>,
+                @location(1) tex_coords: vec2<f32>,
             };
 
             struct VertexOutput {
                 @builtin(position) clip_position: vec4<f32>,
-                @location(0) color: vec3<f32>,
+                @location(0) tex_coords: vec2<f32>,
             };
 
             @vertex
             fn vs_main(model: VertexInput) -> VertexOutput {
                 var out: VertexOutput;
-                out.color = model.color;
+                out.tex_coords = model.tex_coords;
                 out.clip_position = uniforms.transform * vec4<f32>(model.position, 1.0);
                 return out;
             }
 
             @fragment
             fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-                return vec4<f32>(in.color, 1.0);
+                return textureSample(t_diffuse, s_diffuse, in.tex_coords);
             }
             "#
                 .into(),
@@ -134,7 +217,7 @@ impl<'a> EngineState<'a> {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render pipeline layout"),
-                bind_group_layouts: &[Some(&uniform_bind_group_layout)],
+                bind_group_layouts: &[Some(&bind_group_layout)],
                 ..Default::default()
             });
 
@@ -178,7 +261,10 @@ impl<'a> EngineState<'a> {
 
         let mut world = hecs::World::new();
 
-        let spawn_mesh = |device: &wgpu::Device, layout: &wgpu::BindGroupLayout| {
+        let spawn_mesh = |device: &wgpu::Device,
+                          layout: &wgpu::BindGroupLayout,
+                          texture_view: &wgpu::TextureView,
+                          sampler: &wgpu::Sampler| {
             let uniform_data = Uniforms {
                 transform: glam::Mat4::IDENTITY.to_cols_array_2d(),
             };
@@ -192,10 +278,20 @@ impl<'a> EngineState<'a> {
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Uniform binding group"),
                 layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                }],
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(texture_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
             });
             GpuMeshInstance {
                 uniform_buffer,
@@ -208,18 +304,28 @@ impl<'a> EngineState<'a> {
             Transform {
                 position: glam::Vec3::new(-0.4, 0.0, 0.0),
                 rotation: 0.0,
-                scale: glam::Vec3::splat(0.5),
+                scale: glam::Vec3::ONE,
             },
-            spawn_mesh(&device, &uniform_bind_group_layout),
+            spawn_mesh(
+                &device,
+                &bind_group_layout,
+                &diffuse_texture_view,
+                &diffuse_sampler,
+            ),
         ));
 
         world.spawn((
             Transform {
                 position: glam::Vec3::new(0.4, 0.0, 0.0),
                 rotation: 0.0,
-                scale: glam::Vec3::splat(0.5),
+                scale: glam::Vec3::ONE,
             },
-            spawn_mesh(&device, &uniform_bind_group_layout),
+            spawn_mesh(
+                &device,
+                &bind_group_layout,
+                &diffuse_texture_view,
+                &diffuse_sampler,
+            ),
         ));
 
         Self {
@@ -232,7 +338,6 @@ impl<'a> EngineState<'a> {
             render_pipeline,
             vertex_buffer,
             num_vertices,
-            _uniform_bind_group_layout: uniform_bind_group_layout,
             world,
             input: InputState::default(),
         }
