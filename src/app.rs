@@ -6,21 +6,19 @@ use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::Window;
 
-use crate::graphics::State;
+use crate::engine::EngineState;
 
 const TARGET_FPS: f64 = 60.0;
 
-pub struct MimirApp {
-    // window: Option<Window>,
-    state: Option<State>,
+pub struct MimirApp<'a> {
+    state: Option<EngineState<'a>>,
     last_frame_time: Instant,
     accumulated_time: Duration,
 }
 
-impl MimirApp {
+impl<'a> MimirApp<'a> {
     pub fn new() -> Self {
         Self {
-            // window: None,
             state: None,
             last_frame_time: Instant::now(),
             accumulated_time: Duration::ZERO,
@@ -28,7 +26,7 @@ impl MimirApp {
     }
 }
 
-impl ApplicationHandler for MimirApp {
+impl<'a> ApplicationHandler for MimirApp<'a> {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         if self.state.is_some() {
             return;
@@ -42,7 +40,8 @@ impl ApplicationHandler for MimirApp {
                 .create_window(attributes)
                 .expect("failed to create window"),
         );
-        self.state = Some(State::new(window));
+        let state = pollster::block_on(EngineState::new(window));
+        self.state = Some(state);
         self.last_frame_time = Instant::now();
     }
 

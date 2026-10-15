@@ -1,11 +1,11 @@
-mod ecs;
-mod graphics;
+mod app;
+mod components;
+mod engine;
 mod input;
-mod mimir_app;
 
 use winit::event_loop::EventLoop;
 
-use crate::mimir_app::MimirApp;
+use crate::app::MimirApp;
 
 fn main() {
     env_logger::init();

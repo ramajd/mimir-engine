@@ -2,105 +2,29 @@ use std::sync::Arc;
 
 use hecs::Entity;
 use wgpu::CurrentSurfaceTexture;
+use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-#[derive(Default)]
-pub struct InputState {
-    pub up: bool,
-    pub down: bool,
-    pub left: bool,
-    pub right: bool,
-}
+use crate::components::{GpuMeshInstance, PlayerTag, Transform, Uniforms, VERTICES, Vertex};
+use crate::input::InputState;
 
-#[derive(Debug, Clone, Copy)]
-pub struct Transform {
-    pub position: glam::Vec3,
-    pub rotation: f32,
-    pub scale: glam::Vec3,
-}
-
-impl Transform {
-    pub fn to_matrix(&self) -> glam::Mat4 {
-        let translation = glam::Mat4::from_translation(self.position);
-        let rotation = glam::Mat4::from_rotation_z(self.rotation);
-        let scale = glam::Mat4::from_scale(self.scale);
-        translation * rotation * scale
-    }
-}
-
-pub struct GpuMeshInstance {
-    uniform_buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
-}
-
-pub struct PlayerTag;
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Uniforms {
-    pub transform: [[f32; 4]; 4],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    position: [f32; 3],
-    color: [f32; 3],
-}
-
-impl Vertex {
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-            ],
-        }
-    }
-}
-
-const VERTICES: &[Vertex] = &[
-    Vertex {
-        position: [0.0, 0.5, 0.0],
-        color: [1.0, 0.0, 0.0],
-    },
-    Vertex {
-        position: [-0.5, -0.5, 0.0],
-        color: [0.0, 1.0, 0.0],
-    },
-    Vertex {
-        position: [0.5, -0.5, 0.0],
-        color: [0.0, 0.0, 1.0],
-    },
-];
-
-pub struct State {
-    surface: wgpu::Surface<'static>,
+pub struct EngineState<'a> {
+    surface: wgpu::Surface<'a>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    size: winit::dpi::PhysicalSize<u32>,
-    window: Arc<Window>,
+    pub size: winit::dpi::PhysicalSize<u32>,
+    pub window: Arc<Window>,
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     num_vertices: u32,
     _uniform_bind_group_layout: wgpu::BindGroupLayout,
-    world: hecs::World,
+    pub world: hecs::World,
     pub input: InputState,
 }
 
-impl State {
-    pub fn new(window: Arc<Window>) -> Self {
+impl<'a> EngineState<'a> {
+    pub async fn new(window: Arc<Window>) -> Self {
         let size = window.inner_size();
 
         let instance =
@@ -108,21 +32,25 @@ impl State {
 
         let surface = instance.create_surface(window.clone()).unwrap();
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-            ..Default::default()
-        }))
-        .expect("no adapter");
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+                ..Default::default()
+            })
+            .await
+            .expect("no adapter");
 
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::defaults(),
-            label: None,
-            ..Default::default()
-        }))
-        .unwrap();
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::defaults(),
+                label: None,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps
@@ -196,7 +124,6 @@ impl State {
             ),
         });
 
-        use wgpu::util::DeviceExt;
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
             contents: bytemuck::cast_slice(VERTICES),
