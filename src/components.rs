@@ -24,7 +24,7 @@ pub struct GpuMeshInstance {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Uniforms {
-    pub transform: [[f32; 4]; 4],
+    pub mvp: [[f32; 4]; 4],
 }
 
 #[repr(C)]

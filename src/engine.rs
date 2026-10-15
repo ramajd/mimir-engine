@@ -5,6 +5,7 @@ use wgpu::util::DeviceExt;
 use wgpu::{CurrentSurfaceTexture, TexelCopyBufferLayout};
 use winit::window::Window;
 
+use crate::camera::Camera2D;
 use crate::components::{GpuMeshInstance, PlayerTag, Transform, Uniforms, VERTICES, Vertex};
 use crate::input::InputState;
 
@@ -20,6 +21,7 @@ pub struct EngineState<'a> {
     num_vertices: u32,
     pub world: hecs::World,
     pub input: InputState,
+    pub camera: Camera2D,
 }
 
 impl<'a> EngineState<'a> {
@@ -71,6 +73,8 @@ impl<'a> EngineState<'a> {
             color_space: wgpu::SurfaceColorSpace::Auto,
         };
         surface.configure(&device, &config);
+
+        let camera = Camera2D::new(glam::Vec2::ZERO);
 
         let img_width = 256;
         let img_height = 256;
@@ -133,12 +137,11 @@ impl<'a> EngineState<'a> {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("texture bind group layout"),
+            label: Some("bind group layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -170,7 +173,7 @@ impl<'a> EngineState<'a> {
         });
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Texture shader"),
+            label: Some("Camera shader"),
             source: wgpu::ShaderSource::Wgsl(
                 r#"
             struct Uniforms {
@@ -266,7 +269,7 @@ impl<'a> EngineState<'a> {
                           texture_view: &wgpu::TextureView,
                           sampler: &wgpu::Sampler| {
             let uniform_data = Uniforms {
-                transform: glam::Mat4::IDENTITY.to_cols_array_2d(),
+                mvp: glam::Mat4::IDENTITY.to_cols_array_2d(),
             };
 
             let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -276,7 +279,7 @@ impl<'a> EngineState<'a> {
             });
 
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Uniform binding group"),
+                label: Some("bind group"),
                 layout,
                 entries: &[
                     wgpu::BindGroupEntry {
@@ -302,7 +305,7 @@ impl<'a> EngineState<'a> {
         world.spawn((
             PlayerTag,
             Transform {
-                position: glam::Vec3::new(-0.4, 0.0, 0.0),
+                position: glam::Vec3::new(-0.1, 0.0, 0.0),
                 rotation: 0.0,
                 scale: glam::Vec3::ONE,
             },
@@ -316,7 +319,7 @@ impl<'a> EngineState<'a> {
 
         world.spawn((
             Transform {
-                position: glam::Vec3::new(0.4, 0.0, 0.0),
+                position: glam::Vec3::new(0.1, 0.0, 0.0),
                 rotation: 0.0,
                 scale: glam::Vec3::ONE,
             },
@@ -340,6 +343,7 @@ impl<'a> EngineState<'a> {
             num_vertices,
             world,
             input: InputState::default(),
+            camera,
         }
     }
 
@@ -357,7 +361,7 @@ impl<'a> EngineState<'a> {
     }
 
     pub fn update(&mut self, dt: f32) {
-        let speed = 1.5;
+        let speed = 3.0;
         let mut move_dir = glam::Vec3::ZERO;
         if self.input.up {
             move_dir.y += 1.0;
@@ -375,6 +379,10 @@ impl<'a> EngineState<'a> {
         for (_, _tag, transform) in &mut self.world.query::<(Entity, &PlayerTag, &mut Transform)>()
         {
             transform.position += move_dir.normalize_or_zero() * speed * dt;
+            self.camera.position = self
+                .camera
+                .position
+                .lerp(transform.position.truncate(), 5.0 * dt);
         }
 
         for (entity, transform) in &mut self.world.query::<(Entity, &mut Transform)>() {
@@ -383,10 +391,15 @@ impl<'a> EngineState<'a> {
             }
         }
 
+        let proj_matrix = self
+            .camera
+            .build_view_projection_matrix(self.size.width, self.size.height);
+
         for (_, transform, gpu) in &mut self.world.query::<(Entity, &Transform, &GpuMeshInstance)>()
         {
+            let mvp = proj_matrix * transform.to_matrix();
             let uniform_data = Uniforms {
-                transform: transform.to_matrix().to_cols_array_2d(),
+                mvp: mvp.to_cols_array_2d(),
             };
             self.queue.write_buffer(
                 &gpu.uniform_buffer,

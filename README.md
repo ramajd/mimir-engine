@@ -36,7 +36,7 @@ A custom 2D/3D game engine built from scratch in **Rust**, designed to master lo
 - [x] **Step 4.1:** Keyboard input mapping system (WASD / Arrow Keys controlling entities).
 - [x] **Step 4.2:** Multi-entity rendering with independent GPU bind groups and uniform buffers.
 - [x] **Step 4.3:** Texture and Asset Management (Procedural and image-based texture decoding with UV coordinate mapping and sampler binding).
-- [ ] **Step 4.4:** Camera & Projection Matrices (View-Projection matrix scaling and world panning/zooming).
+- [x] **Step 4.4:** Camera & Projection Matrices (View-Projection matrix scaling and world panning/zooming).
 - [ ] **Step 4.5:** Physics & Collision Detection (Axis-Aligned Bounding Box / AABB collision systems or `rapier` integration).
 - [ ] **Step 4.6:** Audio Subsystem (Sound effects and background music via `rodio` or `kira`).
 
@@ -51,8 +51,8 @@ A custom 2D/3D game engine built from scratch in **Rust**, designed to master lo
 
 1. **Clone or initialize the repository:**
    ```bash
-   git clone https://github.com/your-username/rust_engine.git
-   cd rust_engine
+   git clone https://github.com/ramajd/mimir-engine.git
+   cd mimir-engine
    ```
 
 2. **Run the engine:**

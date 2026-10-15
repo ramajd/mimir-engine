@@ -1,4 +1,5 @@
 mod app;
+mod camera;
 mod components;
 mod engine;
 mod input;
