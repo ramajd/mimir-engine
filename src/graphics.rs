@@ -1,9 +1,45 @@
 use std::sync::Arc;
 
+use hecs::Entity;
 use wgpu::CurrentSurfaceTexture;
 use winit::window::Window;
 
-use crate::ecs::{Transform, Uniforms};
+#[derive(Default)]
+pub struct InputState {
+    pub up: bool,
+    pub down: bool,
+    pub left: bool,
+    pub right: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Transform {
+    pub position: glam::Vec3,
+    pub rotation: f32,
+    pub scale: glam::Vec3,
+}
+
+impl Transform {
+    pub fn to_matrix(&self) -> glam::Mat4 {
+        let translation = glam::Mat4::from_translation(self.position);
+        let rotation = glam::Mat4::from_rotation_z(self.rotation);
+        let scale = glam::Mat4::from_scale(self.scale);
+        translation * rotation * scale
+    }
+}
+
+pub struct GpuMeshInstance {
+    uniform_buffer: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+}
+
+pub struct PlayerTag;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Uniforms {
+    pub transform: [[f32; 4]; 4],
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -58,10 +94,9 @@ pub struct State {
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     num_vertices: u32,
+    _uniform_bind_group_layout: wgpu::BindGroupLayout,
     world: hecs::World,
-    triangle_entity: hecs::Entity,
-    uniform_buffer: wgpu::Buffer,
-    uniform_bind_group: wgpu::BindGroup,
+    pub input: InputState,
 }
 
 impl State {
@@ -110,16 +145,6 @@ impl State {
         };
         surface.configure(&device, &config);
 
-        let uniform_data = Uniforms {
-            transform: glam::Mat4::IDENTITY.to_cols_array_2d(),
-        };
-
-        use wgpu::util::DeviceExt;
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Uniform buffer"),
-            contents: bytemuck::cast_slice(&[uniform_data]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
         let uniform_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[wgpu::BindGroupLayoutEntry {
@@ -134,14 +159,6 @@ impl State {
                 }],
                 label: Some("Uniform bind group layout"),
             });
-        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Uniform binding group"),
-            layout: &uniform_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
-        });
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader with Uniforms"),
@@ -179,6 +196,7 @@ impl State {
             ),
         });
 
+        use wgpu::util::DeviceExt;
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Vertex Buffer"),
             contents: bytemuck::cast_slice(VERTICES),
@@ -232,11 +250,50 @@ impl State {
         });
 
         let mut world = hecs::World::new();
-        let triangle_entity = world.spawn((Transform {
-            position: glam::Vec3::new(0.0, 0.0, 0.0),
-            rotation: 0.0,
-            scale: glam::Vec3::ONE,
-        },));
+
+        let spawn_mesh = |device: &wgpu::Device, layout: &wgpu::BindGroupLayout| {
+            let uniform_data = Uniforms {
+                transform: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            };
+
+            let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Uniform buffer"),
+                contents: bytemuck::cast_slice(&[uniform_data]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Uniform binding group"),
+                layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                }],
+            });
+            GpuMeshInstance {
+                uniform_buffer,
+                bind_group,
+            }
+        };
+
+        world.spawn((
+            PlayerTag,
+            Transform {
+                position: glam::Vec3::new(-0.4, 0.0, 0.0),
+                rotation: 0.0,
+                scale: glam::Vec3::splat(0.5),
+            },
+            spawn_mesh(&device, &uniform_bind_group_layout),
+        ));
+
+        world.spawn((
+            Transform {
+                position: glam::Vec3::new(0.4, 0.0, 0.0),
+                rotation: 0.0,
+                scale: glam::Vec3::splat(0.5),
+            },
+            spawn_mesh(&device, &uniform_bind_group_layout),
+        ));
 
         Self {
             surface,
@@ -248,10 +305,9 @@ impl State {
             render_pipeline,
             vertex_buffer,
             num_vertices,
+            _uniform_bind_group_layout: uniform_bind_group_layout,
             world,
-            triangle_entity,
-            uniform_buffer,
-            uniform_bind_group,
+            input: InputState::default(),
         }
     }
 
@@ -269,16 +325,39 @@ impl State {
     }
 
     pub fn update(&mut self, dt: f32) {
-        if let Ok(mut transform) = self.world.get::<&mut Transform>(self.triangle_entity) {
-            transform.rotation += 1.5 * dt;
+        let speed = 1.5;
+        let mut move_dir = glam::Vec3::ZERO;
+        if self.input.up {
+            move_dir.y += 1.0;
+        }
+        if self.input.down {
+            move_dir.y -= 1.0;
+        }
+        if self.input.left {
+            move_dir.x -= 1.0;
+        }
+        if self.input.right {
+            move_dir.x += 1.0;
         }
 
-        if let Ok(transform) = self.world.get::<&Transform>(self.triangle_entity) {
+        for (_, _tag, transform) in &mut self.world.query::<(Entity, &PlayerTag, &mut Transform)>()
+        {
+            transform.position += move_dir.normalize_or_zero() * speed * dt;
+        }
+
+        for (entity, transform) in &mut self.world.query::<(Entity, &mut Transform)>() {
+            if self.world.get::<&PlayerTag>(entity).is_err() {
+                transform.rotation -= 2.0 * dt;
+            }
+        }
+
+        for (_, transform, gpu) in &mut self.world.query::<(Entity, &Transform, &GpuMeshInstance)>()
+        {
             let uniform_data = Uniforms {
                 transform: transform.to_matrix().to_cols_array_2d(),
             };
             self.queue.write_buffer(
-                &self.uniform_buffer,
+                &gpu.uniform_buffer,
                 0,
                 bytemuck::cast_slice(&[uniform_data]),
             );
@@ -319,9 +398,12 @@ impl State {
                 });
 
                 render_pass.set_pipeline(&self.render_pipeline);
-                render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                render_pass.draw(0..self.num_vertices, 0..1);
+
+                for (_, gpu) in &mut self.world.query::<(Entity, &GpuMeshInstance)>() {
+                    render_pass.set_bind_group(0, &gpu.bind_group, &[]);
+                    render_pass.draw(0..self.num_vertices, 0..1);
+                }
             }
             self.queue.submit(std::iter::once(encoder.finish()));
             self.queue.present(output);

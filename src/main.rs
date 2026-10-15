@@ -1,5 +1,6 @@
 mod ecs;
 mod graphics;
+mod input;
 mod mimir_app;
 
 use winit::event_loop::EventLoop;

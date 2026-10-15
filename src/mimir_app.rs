@@ -59,12 +59,22 @@ impl ApplicationHandler for MimirApp {
                     WindowEvent::KeyboardInput {
                         event:
                             KeyEvent {
-                                physical_key: PhysicalKey::Code(KeyCode::Escape),
-                                state: ElementState::Pressed,
+                                physical_key: PhysicalKey::Code(keycode),
+                                state: element_state,
                                 ..
                             },
                         ..
-                    } => event_loop.exit(),
+                    } => {
+                        let is_pressed = element_state == ElementState::Pressed;
+                        match keycode {
+                            KeyCode::KeyW | KeyCode::ArrowUp => state.input.up = is_pressed,
+                            KeyCode::KeyS | KeyCode::ArrowDown => state.input.down = is_pressed,
+                            KeyCode::KeyA | KeyCode::ArrowLeft => state.input.left = is_pressed,
+                            KeyCode::KeyD | KeyCode::ArrowRight => state.input.right = is_pressed,
+                            KeyCode::Escape if is_pressed => event_loop.exit(),
+                            _ => {}
+                        }
+                    }
                     WindowEvent::Resized(new_size) => state.resize(new_size),
                     WindowEvent::RedrawRequested => if state.render() {},
                     _ => (),
@@ -80,7 +90,7 @@ impl ApplicationHandler for MimirApp {
         self.last_frame_time = now;
         self.accumulated_time += delta_time;
 
-        if self.accumulated_time > target_frame_duration {
+        if self.accumulated_time >= target_frame_duration {
             if let Some(state) = &mut self.state {
                 let dt = target_frame_duration.as_secs_f32();
                 state.update(dt);
