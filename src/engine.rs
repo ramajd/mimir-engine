@@ -5,6 +5,7 @@ use wgpu::util::DeviceExt;
 use wgpu::{CurrentSurfaceTexture, TexelCopyBufferLayout};
 use winit::window::Window;
 
+use crate::audio::AudioManager;
 use crate::camera::Camera2D;
 use crate::components::{
     Collider2D, GpuMeshInstance, PlayerTag, Transform, Uniforms, VERTICES, Vertex,
@@ -24,11 +25,18 @@ pub struct EngineState<'a> {
     pub world: hecs::World,
     pub input: InputState,
     pub camera: Camera2D,
+    audio_manager: AudioManager,
 }
 
 impl<'a> EngineState<'a> {
     pub async fn new(window: Arc<Window>) -> Self {
         let size = window.inner_size();
+
+        let mut audio_manager = AudioManager::new().unwrap_or_else(|e| {
+            eprintln!("Warning: Failed to initialize audio output: {}", e);
+            panic!("Audio system failed to initialize");
+        });
+        audio_manager.play_background_music("background.wav");
 
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
@@ -350,6 +358,7 @@ impl<'a> EngineState<'a> {
             world,
             input: InputState::default(),
             camera,
+            audio_manager,
         }
     }
 
@@ -409,6 +418,8 @@ impl<'a> EngineState<'a> {
                 });
             if !collide_x {
                 player_transform.position.x = target_pos_x.x;
+            } else if velocity.x != 0.0 {
+                self.audio_manager.play_sound("hit.wav");
             }
 
             let target_pos_y = player_transform.position + glam::Vec3::new(0.0, velocity.y, 0.0);
@@ -424,6 +435,8 @@ impl<'a> EngineState<'a> {
                 });
             if !collide_y {
                 player_transform.position.y = target_pos_y.y;
+            } else if velocity.y != 0.0 {
+                self.audio_manager.play_sound("hit.wav");
             }
 
             self.camera.position = self
