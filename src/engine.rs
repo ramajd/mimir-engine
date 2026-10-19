@@ -6,7 +6,9 @@ use wgpu::{CurrentSurfaceTexture, TexelCopyBufferLayout};
 use winit::window::Window;
 
 use crate::camera::Camera2D;
-use crate::components::{GpuMeshInstance, PlayerTag, Transform, Uniforms, VERTICES, Vertex};
+use crate::components::{
+    Collider2D, GpuMeshInstance, PlayerTag, Transform, Uniforms, VERTICES, Vertex,
+};
 use crate::input::InputState;
 
 pub struct EngineState<'a> {
@@ -302,13 +304,16 @@ impl<'a> EngineState<'a> {
             }
         };
 
+        let quad_size = 0.6;
+
         world.spawn((
             PlayerTag,
             Transform {
-                position: glam::Vec3::new(-0.1, 0.0, 0.0),
+                position: glam::Vec3::new(-1.0, 0.0, 0.0),
                 rotation: 0.0,
                 scale: glam::Vec3::ONE,
             },
+            Collider2D::new(quad_size, quad_size),
             spawn_mesh(
                 &device,
                 &bind_group_layout,
@@ -319,10 +324,11 @@ impl<'a> EngineState<'a> {
 
         world.spawn((
             Transform {
-                position: glam::Vec3::new(0.1, 0.0, 0.0),
+                position: glam::Vec3::new(1.0, 0.0, 0.0),
                 rotation: 0.0,
                 scale: glam::Vec3::ONE,
             },
+            Collider2D::new(quad_size, quad_size),
             spawn_mesh(
                 &device,
                 &bind_group_layout,
@@ -376,19 +382,54 @@ impl<'a> EngineState<'a> {
             move_dir.x += 1.0;
         }
 
-        for (_, _tag, transform) in &mut self.world.query::<(Entity, &PlayerTag, &mut Transform)>()
+        let velocity = move_dir.normalize_or_zero() * speed * dt;
+
+        let solids: Vec<(Entity, glam::Vec3, Collider2D)> = self
+            .world
+            .query::<(Entity, &Transform, &Collider2D)>()
+            .iter()
+            .map(|(e, t, c)| (e, t.position, *c))
+            .collect();
+
+        for (player_entity, _, player_transform, player_collider) in
+            &mut self
+                .world
+                .query::<(Entity, &PlayerTag, &mut Transform, &Collider2D)>()
         {
-            transform.position += move_dir.normalize_or_zero() * speed * dt;
+            let target_pos_x = player_transform.position + glam::Vec3::new(velocity.x, 0.0, 0.0);
+            let collide_x = solids
+                .iter()
+                .any(|(other_entity, other_position, other_collider)| {
+                    player_entity != *other_entity
+                        && player_collider.intersects(
+                            target_pos_x.truncate(),
+                            other_collider,
+                            other_position.truncate(),
+                        )
+                });
+            if !collide_x {
+                player_transform.position.x = target_pos_x.x;
+            }
+
+            let target_pos_y = player_transform.position + glam::Vec3::new(0.0, velocity.y, 0.0);
+            let collide_y = solids
+                .iter()
+                .any(|(other_entity, other_postition, other_collider)| {
+                    player_entity != *other_entity
+                        && player_collider.intersects(
+                            target_pos_y.truncate(),
+                            other_collider,
+                            other_postition.truncate(),
+                        )
+                });
+            if !collide_y {
+                player_transform.position.y = target_pos_y.y;
+            }
+
             self.camera.position = self
                 .camera
                 .position
-                .lerp(transform.position.truncate(), 5.0 * dt);
-        }
-
-        for (entity, transform) in &mut self.world.query::<(Entity, &mut Transform)>() {
-            if self.world.get::<&PlayerTag>(entity).is_err() {
-                transform.rotation -= 2.0 * dt;
-            }
+                .lerp(player_transform.position.truncate(), 5.0 * dt);
         }
 
         let proj_matrix = self

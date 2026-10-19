@@ -16,6 +16,26 @@ impl Transform {
 
 pub struct PlayerTag;
 
+#[derive(Debug, Clone, Copy)]
+pub struct Collider2D {
+    pub half_size: glam::Vec2,
+}
+
+impl Collider2D {
+    pub fn new(width: f32, height: f32) -> Self {
+        Self {
+            half_size: glam::Vec2::new(width * 0.5, height * 0.5),
+        }
+    }
+
+    pub fn intersects(&self, pos_a: glam::Vec2, other: &Collider2D, pos_b: glam::Vec2) -> bool {
+        let delta = (pos_a - pos_b).abs();
+        let total_half_size = self.half_size + other.half_size;
+
+        delta.x < total_half_size.x && delta.y < total_half_size.y
+    }
+}
+
 pub struct GpuMeshInstance {
     pub uniform_buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,

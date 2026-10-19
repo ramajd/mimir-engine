@@ -37,7 +37,7 @@ A custom 2D/3D game engine built from scratch in **Rust**, designed to master lo
 - [x] **Step 4.2:** Multi-entity rendering with independent GPU bind groups and uniform buffers.
 - [x] **Step 4.3:** Texture and Asset Management (Procedural and image-based texture decoding with UV coordinate mapping and sampler binding).
 - [x] **Step 4.4:** Camera & Projection Matrices (View-Projection matrix scaling and world panning/zooming).
-- [ ] **Step 4.5:** Physics & Collision Detection (Axis-Aligned Bounding Box / AABB collision systems or `rapier` integration).
+- [x] **Step 4.5:** Physics & Collision Detection (Axis-Aligned Bounding Box / AABB collision systems or `rapier` integration).
 - [ ] **Step 4.6:** Audio Subsystem (Sound effects and background music via `rodio` or `kira`).
 
 ### Phase 5: The Proof-of-Concept Game ⏳ (Pending)
