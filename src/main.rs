@@ -4,6 +4,8 @@ mod camera;
 mod components;
 mod engine;
 mod input;
+mod scenes;
+mod state;
 
 use winit::event_loop::EventLoop;
 

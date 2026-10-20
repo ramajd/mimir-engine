@@ -3,6 +3,7 @@ use std::sync::Arc;
 use hecs::Entity;
 use wgpu::util::DeviceExt;
 use wgpu::{CurrentSurfaceTexture, TexelCopyBufferLayout};
+use winit::event::KeyEvent;
 use winit::window::Window;
 
 use crate::audio::AudioManager;
@@ -11,6 +12,9 @@ use crate::components::{
     Collider2D, GpuMeshInstance, PlayerTag, Transform, Uniforms, VERTICES, Vertex,
 };
 use crate::input::InputState;
+use crate::scenes::game::GamePlayState;
+use crate::scenes::menu::MainMenuState;
+use crate::state::{AppState, StateMachine};
 
 pub struct EngineState<'a> {
     surface: wgpu::Surface<'a>,
@@ -22,10 +26,14 @@ pub struct EngineState<'a> {
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     num_vertices: u32,
-    pub world: hecs::World,
     pub input: InputState,
-    pub camera: Camera2D,
     audio_manager: AudioManager,
+    current_state: AppState,
+    menu_scene: MainMenuState,
+    game_scene: GamePlayState,
+    diffuse_texture_view: wgpu::TextureView,
+    diffuse_sampler: wgpu::Sampler,
+    bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl<'a> EngineState<'a> {
@@ -83,8 +91,6 @@ impl<'a> EngineState<'a> {
             color_space: wgpu::SurfaceColorSpace::Auto,
         };
         surface.configure(&device, &config);
-
-        let camera = Camera2D::new(glam::Vec2::ZERO);
 
         let img_width = 256;
         let img_height = 256;
@@ -183,7 +189,7 @@ impl<'a> EngineState<'a> {
         });
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Camera shader"),
+            label: Some("Scene shader"),
             source: wgpu::ShaderSource::Wgsl(
                 r#"
             struct Uniforms {
@@ -255,95 +261,13 @@ impl<'a> EngineState<'a> {
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
+                ..Default::default()
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
+            multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
             cache: None,
         });
-
-        let mut world = hecs::World::new();
-
-        let spawn_mesh = |device: &wgpu::Device,
-                          layout: &wgpu::BindGroupLayout,
-                          texture_view: &wgpu::TextureView,
-                          sampler: &wgpu::Sampler| {
-            let uniform_data = Uniforms {
-                mvp: glam::Mat4::IDENTITY.to_cols_array_2d(),
-            };
-
-            let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Uniform buffer"),
-                contents: bytemuck::cast_slice(&[uniform_data]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
-
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("bind group"),
-                layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: uniform_buffer.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(texture_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                ],
-            });
-            GpuMeshInstance {
-                uniform_buffer,
-                bind_group,
-            }
-        };
-
-        let quad_size = 0.6;
-
-        world.spawn((
-            PlayerTag,
-            Transform {
-                position: glam::Vec3::new(-1.0, 0.0, 0.0),
-                rotation: 0.0,
-                scale: glam::Vec3::ONE,
-            },
-            Collider2D::new(quad_size, quad_size),
-            spawn_mesh(
-                &device,
-                &bind_group_layout,
-                &diffuse_texture_view,
-                &diffuse_sampler,
-            ),
-        ));
-
-        world.spawn((
-            Transform {
-                position: glam::Vec3::new(1.0, 0.0, 0.0),
-                rotation: 0.0,
-                scale: glam::Vec3::ONE,
-            },
-            Collider2D::new(quad_size, quad_size),
-            spawn_mesh(
-                &device,
-                &bind_group_layout,
-                &diffuse_texture_view,
-                &diffuse_sampler,
-            ),
-        ));
 
         Self {
             surface,
@@ -355,10 +279,14 @@ impl<'a> EngineState<'a> {
             render_pipeline,
             vertex_buffer,
             num_vertices,
-            world,
             input: InputState::default(),
-            camera,
             audio_manager,
+            current_state: AppState::MainMenu,
+            menu_scene: MainMenuState::new(),
+            game_scene: GamePlayState::new(),
+            diffuse_texture_view,
+            diffuse_sampler,
+            bind_group_layout,
         }
     }
 
@@ -375,91 +303,31 @@ impl<'a> EngineState<'a> {
         }
     }
 
+    pub fn set_state(&mut self, next: AppState) {
+        if next == AppState::Playing {
+            println!("Entering Gameplay State.");
+            self.game_scene = GamePlayState::new();
+        }
+        self.current_state = next;
+    }
+
     pub fn update(&mut self, dt: f32) {
-        let speed = 3.0;
-        let mut move_dir = glam::Vec3::ZERO;
-        if self.input.up {
-            move_dir.y += 1.0;
+        let next_state = match self.current_state {
+            AppState::MainMenu => self.menu_scene.update(dt, &self.input),
+            AppState::Playing => self.game_scene.update(dt, &self.input),
+            AppState::GameOver => None,
+        };
+
+        if let Some(new_state) = next_state {
+            self.set_state(new_state);
         }
-        if self.input.down {
-            move_dir.y -= 1.0;
-        }
-        if self.input.left {
-            move_dir.x -= 1.0;
-        }
-        if self.input.right {
-            move_dir.x += 1.0;
-        }
+    }
 
-        let velocity = move_dir.normalize_or_zero() * speed * dt;
-
-        let solids: Vec<(Entity, glam::Vec3, Collider2D)> = self
-            .world
-            .query::<(Entity, &Transform, &Collider2D)>()
-            .iter()
-            .map(|(e, t, c)| (e, t.position, *c))
-            .collect();
-
-        for (player_entity, _, player_transform, player_collider) in
-            &mut self
-                .world
-                .query::<(Entity, &PlayerTag, &mut Transform, &Collider2D)>()
-        {
-            let target_pos_x = player_transform.position + glam::Vec3::new(velocity.x, 0.0, 0.0);
-            let collide_x = solids
-                .iter()
-                .any(|(other_entity, other_position, other_collider)| {
-                    player_entity != *other_entity
-                        && player_collider.intersects(
-                            target_pos_x.truncate(),
-                            other_collider,
-                            other_position.truncate(),
-                        )
-                });
-            if !collide_x {
-                player_transform.position.x = target_pos_x.x;
-            } else if velocity.x != 0.0 {
-                self.audio_manager.play_sound("hit.wav");
-            }
-
-            let target_pos_y = player_transform.position + glam::Vec3::new(0.0, velocity.y, 0.0);
-            let collide_y = solids
-                .iter()
-                .any(|(other_entity, other_postition, other_collider)| {
-                    player_entity != *other_entity
-                        && player_collider.intersects(
-                            target_pos_y.truncate(),
-                            other_collider,
-                            other_postition.truncate(),
-                        )
-                });
-            if !collide_y {
-                player_transform.position.y = target_pos_y.y;
-            } else if velocity.y != 0.0 {
-                self.audio_manager.play_sound("hit.wav");
-            }
-
-            self.camera.position = self
-                .camera
-                .position
-                .lerp(player_transform.position.truncate(), 5.0 * dt);
-        }
-
-        let proj_matrix = self
-            .camera
-            .build_view_projection_matrix(self.size.width, self.size.height);
-
-        for (_, transform, gpu) in &mut self.world.query::<(Entity, &Transform, &GpuMeshInstance)>()
-        {
-            let mvp = proj_matrix * transform.to_matrix();
-            let uniform_data = Uniforms {
-                mvp: mvp.to_cols_array_2d(),
-            };
-            self.queue.write_buffer(
-                &gpu.uniform_buffer,
-                0,
-                bytemuck::cast_slice(&[uniform_data]),
-            );
+    pub fn handle_keyboard(&mut self, event: &KeyEvent) -> Option<AppState> {
+        match self.current_state {
+            AppState::MainMenu => self.menu_scene.handle_keyboard(event),
+            AppState::Playing => self.game_scene.handle_keyboard(event),
+            AppState::GameOver => None,
         }
     }
 
@@ -496,12 +364,56 @@ impl<'a> EngineState<'a> {
                     ..Default::default()
                 });
 
-                render_pass.set_pipeline(&self.render_pipeline);
-                render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                if self.current_state == AppState::Playing {
+                    render_pass.set_pipeline(&self.render_pipeline);
+                    render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                    let (width, height) = self.size.into();
+                    let proj_matrix = self
+                        .game_scene
+                        .camera
+                        .build_view_projection_matrix(width, height);
 
-                for (_, gpu) in &mut self.world.query::<(Entity, &GpuMeshInstance)>() {
-                    render_pass.set_bind_group(0, &gpu.bind_group, &[]);
-                    render_pass.draw(0..self.num_vertices, 0..1);
+                    for (_, transdorm) in &mut self.game_scene.world.query::<(Entity, &Transform)>()
+                    {
+                        let mvp = proj_matrix * transdorm.to_matrix();
+                        let uniform_data = Uniforms {
+                            mvp: mvp.to_cols_array_2d(),
+                        };
+
+                        let uniform_buffer =
+                            self.device
+                                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                    label: Some("Temp uniform"),
+                                    contents: bytemuck::cast_slice(&[uniform_data]),
+                                    usage: wgpu::BufferUsages::UNIFORM,
+                                });
+                        let bind_group =
+                            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                layout: &self.bind_group_layout,
+                                entries: &[
+                                    wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: uniform_buffer.as_entire_binding(),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 1,
+                                        resource: wgpu::BindingResource::TextureView(
+                                            &self.diffuse_texture_view,
+                                        ),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 2,
+                                        resource: wgpu::BindingResource::Sampler(
+                                            &self.diffuse_sampler,
+                                        ),
+                                    },
+                                ],
+                                label: Some("temp bind group"),
+                            });
+
+                        render_pass.set_bind_group(0, &bind_group, &[]);
+                        render_pass.draw(0..self.num_vertices, 0..1);
+                    }
                 }
             }
             self.queue.submit(std::iter::once(encoder.finish()));

@@ -56,22 +56,36 @@ impl<'a> ApplicationHandler for MimirApp<'a> {
                 match event {
                     WindowEvent::CloseRequested => event_loop.exit(),
                     WindowEvent::KeyboardInput {
-                        event:
-                            KeyEvent {
-                                physical_key: PhysicalKey::Code(keycode),
-                                state: element_state,
-                                ..
-                            },
-                        ..
+                        event: key_event, ..
                     } => {
-                        let is_pressed = element_state == ElementState::Pressed;
-                        match keycode {
-                            KeyCode::KeyW | KeyCode::ArrowUp => state.input.up = is_pressed,
-                            KeyCode::KeyS | KeyCode::ArrowDown => state.input.down = is_pressed,
-                            KeyCode::KeyA | KeyCode::ArrowLeft => state.input.left = is_pressed,
-                            KeyCode::KeyD | KeyCode::ArrowRight => state.input.right = is_pressed,
-                            KeyCode::Escape if is_pressed => event_loop.exit(),
-                            _ => {}
+                        let is_pressed = key_event.state == ElementState::Pressed;
+                        match key_event.physical_key {
+                            PhysicalKey::Code(KeyCode::KeyW)
+                            | PhysicalKey::Code(KeyCode::ArrowUp) => state.input.up = is_pressed,
+                            PhysicalKey::Code(KeyCode::KeyS)
+                            | PhysicalKey::Code(KeyCode::ArrowDown) => {
+                                state.input.down = is_pressed
+                            }
+                            PhysicalKey::Code(KeyCode::KeyA)
+                            | PhysicalKey::Code(KeyCode::ArrowLeft) => {
+                                state.input.left = is_pressed
+                            }
+                            PhysicalKey::Code(KeyCode::KeyD)
+                            | PhysicalKey::Code(KeyCode::ArrowRight) => {
+                                state.input.right = is_pressed
+                            }
+                            PhysicalKey::Code(KeyCode::Escape) if is_pressed => {
+                                if let Some(new_state) = state.handle_keyboard(&key_event) {
+                                    state.set_state(new_state);
+                                } else {
+                                    event_loop.exit();
+                                }
+                            }
+                            _ => {
+                                if let Some(new_state) = state.handle_keyboard(&key_event) {
+                                    state.set_state(new_state);
+                                }
+                            }
                         }
                     }
                     WindowEvent::Resized(new_size) => state.resize(new_size),
